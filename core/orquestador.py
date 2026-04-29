@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import os
 from datetime import date, datetime
 from pathlib import Path
@@ -17,6 +18,7 @@ load_dotenv(_ROOT / ".env")
 
 RAG_BASE_URL = os.environ.get("RAG_BASE_URL", "http://127.0.0.1:8001")
 RAG_TIMEOUT_S = 15.0
+RAG_BATCH_MAX_CONCURRENT = 20
 
 PredictorFn = Callable[[dict[str, Any]], dict[str, Any]]
 
@@ -26,7 +28,7 @@ _DEADLINE_IDS_PAGO = {
 }
 
 
-def _payload_caso(caso: CasoIOC) -> dict[str, Any]:
+def payload_caso(caso: CasoIOC) -> dict[str, Any]:
     return {
         "id_caso": caso.id_caso,
         "rut_usuario": caso.rut_usuario,
@@ -41,7 +43,7 @@ def _payload_caso(caso: CasoIOC) -> dict[str, Any]:
     }
 
 
-def _payload_grupo(grupo: Grupo) -> dict[str, Any]:
+def payload_grupo(grupo: Grupo) -> dict[str, Any]:
     return {
         "id_caso": grupo.id_grupo,
         "rut_usuario": grupo.rut_usuario,
@@ -91,10 +93,46 @@ def _normalizar_deadlines(rag_response: dict[str, Any]) -> list[Deadline]:
 def predecir_para_caso(
     caso: CasoIOC, predictor: PredictorFn = _llamar_rag_http
 ) -> list[Deadline]:
-    return _normalizar_deadlines(predictor(_payload_caso(caso)))
+    return _normalizar_deadlines(predictor(payload_caso(caso)))
 
 
 def predecir_para_grupo(
     grupo: Grupo, predictor: PredictorFn = _llamar_rag_http
 ) -> list[Deadline]:
-    return _normalizar_deadlines(predictor(_payload_grupo(grupo)))
+    return _normalizar_deadlines(predictor(payload_grupo(grupo)))
+
+
+async def predecir_batch(
+    items: list[dict[str, Any]],
+    rag_url: str = RAG_BASE_URL,
+    max_concurrent: int = RAG_BATCH_MAX_CONCURRENT,
+) -> list[dict[str, Any]]:
+    """Llama al predictor del RAG para cada item en paralelo.
+
+    items: lista de dicts con keys "key" (identificador local) y "payload"
+    (cuerpo del POST a /predecir-cronograma).
+
+    Returns una lista paralela con dicts {"key": ..., "deadlines": list[Deadline]}.
+    """
+    semaphore = asyncio.Semaphore(max_concurrent)
+
+    async def _fetch(client: httpx.AsyncClient, payload: dict[str, Any]) -> dict[str, Any]:
+        async with semaphore:
+            resp = await client.post(
+                "/predecir-cronograma", json=payload, timeout=RAG_TIMEOUT_S
+            )
+            resp.raise_for_status()
+            return resp.json()
+
+    if not items:
+        return []
+
+    async with httpx.AsyncClient(base_url=rag_url) as client:
+        responses = await asyncio.gather(
+            *(_fetch(client, item["payload"]) for item in items)
+        )
+
+    return [
+        {"key": item["key"], "deadlines": _normalizar_deadlines(resp)}
+        for item, resp in zip(items, responses)
+    ]

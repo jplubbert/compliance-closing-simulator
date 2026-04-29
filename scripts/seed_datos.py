@@ -79,13 +79,14 @@ def generar() -> tuple[list[dict], list[dict]]:
     casos: list[dict] = []
     ejecuciones: list[dict] = []
 
-    n_individuales = 120  # 60%
-    n_pares = 20         # 20% = 40 casos
-    n_sin_denuncia = 20  # 10%
-    n_sobre_umbral = 10  # 5%
-    n_pago_1 = 10        # 5%
+    n_individuales = 110  # 55%
+    n_pares = 20          # 20% = 40 casos
+    n_sin_denuncia = 20   # 10% (descartados: > 30 días sin denuncia)
+    n_sobre_umbral = 10   # 5%
+    n_pago_1 = 10         # 5%
+    n_tentativos = 10     # 5% (sin denuncia, todavía dentro del plazo de 30 días)
 
-    # 60% individuales sin agrupar (mix ATM y no-ATM)
+    # 55% individuales sin agrupar (mix ATM y no-ATM)
     for _ in range(n_individuales):
         es_atm = random.random() < 0.35
         casos.append(
@@ -124,6 +125,17 @@ def generar() -> tuple[list[dict], list[dict]]:
                 rut=generar_rut_valido(),
                 fecha_reclamo=_fecha_aleatoria_ultimos(60),
                 monto=_monto_sobre_umbral(),
+            )
+        )
+
+    # 5% sin denuncia y todavía dentro del plazo de 30 días (tentativos)
+    for _ in range(n_tentativos):
+        f_reclamo = HOY - timedelta(days=random.randint(5, 25))
+        casos.append(
+            _build_caso(
+                rut=generar_rut_valido(),
+                fecha_reclamo=f_reclamo,
+                con_denuncia=False,
             )
         )
 
@@ -186,12 +198,20 @@ def main() -> None:
 
     n_atm = sum(1 for c in casos if c["operacion_objeto"] in ("04", "05"))
     n_sin_den = sum(1 for c in casos if c["fecha_denuncia"] is None)
+    n_tentativos_real = sum(
+        1
+        for c in casos
+        if c["fecha_denuncia"] is None and (HOY - c["fecha_reclamo"]).days <= 30
+    )
+    n_descartables = n_sin_den - n_tentativos_real
     n_sobre = sum(1 for c in casos if c["monto_total_impugnado"] > 35 * 38_500)
 
     print(f"Seed completo: {len(casos)} casos insertados.")
     print(f"  ATM (04/05):                    {n_atm}")
     print(f"  No-ATM:                         {len(casos) - n_atm}")
-    print(f"  Sin denuncia:                   {n_sin_den}")
+    print(f"  Sin denuncia (total):           {n_sin_den}")
+    print(f"    Tentativos (<=30d):           {n_tentativos_real}")
+    print(f"    Descartables (>30d):          {n_descartables}")
     print(f"  Sobre umbral 35 UF (~{35 * 38_500:,} CLP): {n_sobre}")
     print(f"  Ejecuciones de pago:            {len(ejecuciones)}")
 

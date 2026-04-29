@@ -21,9 +21,11 @@ from collections import defaultdict
 
 from fastapi import FastAPI, HTTPException
 
+from core.agrupador import agrupar, filtrar_y_descartar
 from core.db import get_connection
 from core.modelo import CasoIOC
-from core.queue_builder import construir_queue
+from core.orquestador import payload_caso, payload_grupo, predecir_batch
+from core.queue_builder import ensamblar_queue
 
 
 app = FastAPI(
@@ -73,7 +75,7 @@ def health() -> dict[str, str]:
 
 
 @app.post("/generar-queue")
-def generar_queue(payload: dict[str, Any] | None = None) -> dict[str, Any]:
+async def generar_queue(payload: dict[str, Any] | None = None) -> dict[str, Any]:
     payload = payload or {}
     hoy_str = payload.get("hoy")
     try:
@@ -84,9 +86,23 @@ def generar_queue(payload: dict[str, Any] | None = None) -> dict[str, Any]:
         raise HTTPException(status_code=400, detail="hoy debe ser YYYY-MM-DD")
 
     casos, pagos = _cargar_estado()
-    return construir_queue(
-        casos,
+    activos, descartados = filtrar_y_descartar(casos, pagos, set(), hoy)
+    grupos, individuales = agrupar(activos, pagos)
+
+    items_a_predecir: list[dict[str, Any]] = []
+    for grupo in grupos:
+        items_a_predecir.append({"key": grupo.id_grupo, "payload": payload_grupo(grupo)})
+    for caso in individuales:
+        items_a_predecir.append({"key": caso.id_caso, "payload": payload_caso(caso)})
+
+    batch = await predecir_batch(items_a_predecir)
+    deadlines_por_id = {entry["key"]: entry["deadlines"] for entry in batch}
+
+    return ensamblar_queue(
+        grupos=grupos,
+        individuales=individuales,
+        descartados=descartados,
+        deadlines_por_id=deadlines_por_id,
         pagos_ejecutados_por_caso=pagos,
-        descartados_caso_ids=set(),
         hoy=hoy,
     )

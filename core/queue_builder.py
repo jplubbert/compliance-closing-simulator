@@ -102,7 +102,7 @@ def construir_queue(
     predictor_grupo: Callable[[Grupo], list[Deadline]] | None = None,
     predictor_fn: PredictorFn | None = None,
 ) -> dict[str, Any]:
-    """Pipeline completo: filtra, agrupa, llama predictor, clasifica y ordena."""
+    """Pipeline completo síncrono: filtra, agrupa, llama predictor, clasifica y ordena."""
     pred_caso = predictor_caso or (
         (lambda c: predecir_para_caso(c, predictor_fn))
         if predictor_fn
@@ -122,12 +122,43 @@ def construir_queue(
     )
     grupos, individuales = agrupar(activos, pagos_ejecutados_por_caso)
 
+    deadlines_por_id: dict[str, list[Deadline]] = {}
+    for grupo in grupos:
+        deadlines_por_id[grupo.id_grupo] = pred_grupo(grupo)
+    for caso in individuales:
+        deadlines_por_id[caso.id_caso] = pred_caso(caso)
+
+    return ensamblar_queue(
+        grupos=grupos,
+        individuales=individuales,
+        descartados=descartados,
+        deadlines_por_id=deadlines_por_id,
+        pagos_ejecutados_por_caso=pagos_ejecutados_por_caso,
+        hoy=hoy,
+    )
+
+
+def ensamblar_queue(
+    *,
+    grupos: list[Grupo],
+    individuales: list[CasoIOC],
+    descartados: list[CasoIOC],
+    deadlines_por_id: dict[str, list[Deadline]],
+    pagos_ejecutados_por_caso: dict[str, set[int]],
+    hoy: date,
+) -> dict[str, Any]:
+    """Clasifica deadlines, ordena y produce la queue final.
+
+    Pensado para ejecutarse una vez `deadlines_por_id` ya fue resuelto (vía RAG
+    sincrónico, batch async, mock, etc.). Las claves del dict son `grupo.id_grupo`
+    para grupos y `caso.id_caso` para individuales.
+    """
     feriados = _feriados_chile(hoy.year - 1, hoy.year + 1)
 
     items: list[dict[str, Any]] = []
 
     for grupo in grupos:
-        deadlines = pred_grupo(grupo)
+        deadlines = deadlines_por_id.get(grupo.id_grupo, [])
         pagos_ejec = _ejec_para_item(pagos_ejecutados_por_caso, grupo.ids_casos)
         items.append(
             _construir_item(
@@ -145,7 +176,7 @@ def construir_queue(
         )
 
     for caso in individuales:
-        deadlines = pred_caso(caso)
+        deadlines = deadlines_por_id.get(caso.id_caso, [])
         pagos_ejec = pagos_ejecutados_por_caso.get(caso.id_caso, set())
         items.append(
             _construir_item(

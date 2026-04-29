@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import sys
+import time
 from pathlib import Path
 
 sys.stdout.reconfigure(encoding="utf-8", errors="replace")
@@ -24,10 +25,13 @@ def main() -> None:
     health.raise_for_status()
     print(f"health: {health.json()}")
 
-    resp = httpx.post(f"{SIM_URL}/generar-queue", json={}, timeout=600.0)
+    t0 = time.perf_counter()
+    resp = httpx.post(f"{SIM_URL}/generar-queue", json={}, timeout=120.0)
+    elapsed = time.perf_counter() - t0
     resp.raise_for_status()
     data = resp.json()
-    print(f"\nfecha_corte: {data['fecha_corte']}")
+    print(f"\nqueue generada en {elapsed:.1f} segundos")
+    print(f"fecha_corte: {data['fecha_corte']}")
     print(f"totales: {data['totales']}")
     print(f"queue size: {len(data['queue'])}")
     print(f"\nPrimeros 10 items de la queue:")
