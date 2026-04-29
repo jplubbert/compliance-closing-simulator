@@ -29,7 +29,7 @@ from core.queue_builder import ensamblar_queue
 
 
 app = FastAPI(
-    title="lsc-cierre-simulator API",
+    title="compliance-closing-simulator API",
     description="Genera la queue priorizada de pagos LSC.",
     version="0.1.0",
 )
@@ -71,7 +71,7 @@ def _cargar_estado() -> tuple[list[CasoIOC], dict[str, set[int]]]:
 
 @app.get("/health")
 def health() -> dict[str, str]:
-    return {"status": "ok", "service": "lsc-cierre-simulator"}
+    return {"status": "ok", "service": "compliance-closing-simulator"}
 
 
 @app.post("/generar-queue")
