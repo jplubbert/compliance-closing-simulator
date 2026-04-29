@@ -1,0 +1,9 @@
+fastapi
+uvicorn
+duckdb
+httpx
+python-dateutil
+python-dotenv
+pydantic
+pytest
+holidays
